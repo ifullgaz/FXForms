@@ -51,6 +51,7 @@ NSString *const FXFormFieldKey = @"key";
 NSString *const FXFormFieldType = @"type";
 NSString *const FXFormFieldClass = @"class";
 NSString *const FXFormFieldCell = @"cell";
+NSString *const FXFormFieldCellIdentifier = @"cellIdentifier";
 NSString *const FXFormFieldTitle = @"title";
 NSString *const FXFormFieldPlaceholder = @"placeholder";
 NSString *const FXFormFieldDefaultValue = @"default";
@@ -547,6 +548,13 @@ static void FXFormPreprocessFieldDictionary(NSMutableDictionary *dictionary)
         dictionary[FXFormFieldCell] = cellClass = FXFormClassFromString(cellClass);
     }
     
+    //cleanup cellIdentifier
+    id cellIdentifier = dictionary[FXFormFieldCellIdentifier];
+    if (![cellIdentifier isKindOfClass:[NSString class]])
+    {
+        [dictionary removeObjectForKey:FXFormFieldCellIdentifier];
+    }
+    
     //convert view controller from string to class
     id viewController = dictionary[FXFormFieldViewController];
     if ([viewController isKindOfClass:[NSString class]])
@@ -653,6 +661,7 @@ static void FXFormPreprocessFieldDictionary(NSMutableDictionary *dictionary)
 
 @property (nonatomic, strong) Class valueClass;
 @property (nonatomic, strong) Class cellClass;
+@property (nonatomic, copy) NSString *cellIdentifier;
 @property (nonatomic, readwrite) NSString *key;
 @property (nonatomic, readwrite) NSArray *options;
 @property (nonatomic, readwrite) NSDictionary *fieldTemplate;
@@ -1117,6 +1126,11 @@ static void FXFormPreprocessFieldDictionary(NSMutableDictionary *dictionary)
 - (void)setCell:(Class)cellClass
 {
     _cellClass = cellClass;
+}
+
+- (void)setCellIdentifier:(NSString *)cellIdentifier
+{
+    _cellIdentifier = [cellIdentifier copy];
 }
 
 - (void)setDefault:(id)defaultValue
@@ -1979,10 +1993,10 @@ static void FXFormPreprocessFieldDictionary(NSMutableDictionary *dictionary)
 - (void)setTableView:(UITableView *)tableView
 {
     _tableView = tableView;
-    self.tableView.dataSource = self;
-    self.tableView.delegate = self;
     self.tableView.editing = YES;
     self.tableView.allowsSelectionDuringEditing = YES;
+    self.tableView.dataSource = self;
+    self.tableView.delegate = self;
     [self.tableView reloadData];
 }
 
@@ -2118,28 +2132,37 @@ static void FXFormPreprocessFieldDictionary(NSMutableDictionary *dictionary)
 {
     //don't recycle cells - it would make things complicated
     Class cellClass = field.cellClass ?: [self cellClassForField:field];
-    NSString *nibName = NSStringFromClass(cellClass);
-    if ([[NSBundle mainBundle] pathForResource:nibName ofType:@"nib"])
+    NSString *cellIdentifier = field.cellIdentifier;
+    if (![cellIdentifier length])
     {
-        //load cell from nib
-        return [[[NSBundle mainBundle] loadNibNamed:nibName owner:nil options:nil] firstObject];
+        NSString *nibName = NSStringFromClass(cellClass);
+        if ([[NSBundle mainBundle] pathForResource:nibName ofType:@"nib"])
+        {
+            //load cell from nib
+            return [[[NSBundle mainBundle] loadNibNamed:nibName owner:nil options:nil] firstObject];
+        }
     }
     else
     {
-        //hackity-hack-hack
-        UITableViewCellStyle style = UITableViewCellStyleDefault;
-        if ([field valueForKey:@"style"])
+        UITableViewCell *cell = [self.tableView dequeueReusableCellWithIdentifier:cellIdentifier];
+        if (cell)
         {
-            style = [[field valueForKey:@"style"] integerValue];
+            return cell;
         }
-        else if (FXFormCanGetValueForKey(field.form, field.key))
-        {
-            style = UITableViewCellStyleValue1;
-        }
-
-        //don't recycle cells - it would make things complicated
-        return [[cellClass alloc] initWithStyle:style reuseIdentifier:NSStringFromClass(cellClass)];
     }
+    //hackity-hack-hack
+    UITableViewCellStyle style = UITableViewCellStyleDefault;
+    if ([field valueForKey:@"style"])
+    {
+        style = [[field valueForKey:@"style"] integerValue];
+    }
+    else if (FXFormCanGetValueForKey(field.form, field.key))
+    {
+        style = UITableViewCellStyleValue1;
+    }
+    
+    //don't recycle cells - it would make things complicated
+    return [[cellClass alloc] initWithStyle:style reuseIdentifier:NSStringFromClass(cellClass)];
 }
 
 - (CGFloat)tableView:(__unused UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath
@@ -2152,12 +2175,14 @@ static void FXFormPreprocessFieldDictionary(NSMutableDictionary *dictionary)
     }
 
     NSString *className = NSStringFromClass(cellClass);
-    NSNumber *cachedHeight = _cellHeightCache[className];
-    if (!cachedHeight)
+    NSString *cellIdentifer = field.cellIdentifier;
+    NSString *cacheKey = [cellIdentifer length] ? [NSString stringWithFormat:@"%@-%@", className, cellIdentifer] : className;
+    NSNumber *cachedHeight = _cellHeightCache[cacheKey];
+    if (![cachedHeight boolValue])
     {
         UITableViewCell *cell = [self cellForField:field];
         cachedHeight = @(cell.bounds.size.height);
-        _cellHeightCache[className] = cachedHeight;
+        _cellHeightCache[cacheKey] = cachedHeight;
     }
 
     return [cachedHeight floatValue];
